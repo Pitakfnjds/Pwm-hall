@@ -231,15 +231,15 @@ void setup() {
 unsigned long readRampTime() {
     static bool initialized = false;
     static float filtered;
-    int raw = analogRead(POT_PIN);
+    int raw = analogRead(RAMP_POT_PIN);
     if (!initialized) {
         filtered = raw;
         initialized = true;
     }
     const float alpha = 0.12;
     filtered += alpha * (raw - filtered);
-    unsigned long ramp = map((int)filtered, 0, 1023, RAMP_TIME_MIN, RAMP_TIME_MAX);
-    return constrain(ramp, RAMP_TIME_MIN, RAMP_TIME_MAX);
+    unsigned long ramp = map((int)filtered, 0, 1023, RAMP_MIN_TIME, RAMP_MAX_TIME);
+    return constrain(ramp, RAMP_MIN_TIME, RAMP_MAX_TIME);
 }
 
 // Čítanie stavu prepínača
