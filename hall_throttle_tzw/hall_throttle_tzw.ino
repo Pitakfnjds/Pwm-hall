@@ -18,7 +18,7 @@ const int PWM_PIN = 5;        // PWM výstup (potrebuje 2kΩ pull-down!)
 const int DIR_PIN = 4;        // DIR výstup (smer otáčania)
 const int NEOPIXEL_PIN = 9;   // NeoPixel DIN
 const int LED_PIN = 13;       // Vstavaná LED na Nano
-const int POT_PIN = A1;       // potenciometer pre nastavenie rampup času
+const int RAMP_POT_PIN = A1;       // potenciometer pre nastavenie rampup času
 
 // === PREPÍNAČ (ENABLE + SMER) ===
 const int SW_FWD_PIN = 2;     // Poloha 1 = dopredu (A1, červený)
@@ -66,8 +66,8 @@ const int CAL_TIME = 5000;  // 5 sekúnd
 // === SLEW RATE LIMITER (POSTUPNÝ ROZBEH + DOBEH) ===
 unsigned long RAMP_UP_TIME = 800;     // ms z 0% na 100%
 const unsigned long RAMP_DOWN_TIME = 800;   // ms zo 100% na 0%
-const unsigned long RAMP_TIME_MIN = 200;  // Min. čas pro rozběh/doběh
-const unsigned long RAMP_TIME_MAX = 2000; // Max. čas pro rozběh/doběh
+const unsigned long RAMP_MIN_TIME = 200;  // Min. čas pro rozběh/doběh
+const unsigned long RAMP_MAX_TIME = 2000; // Max. čas pro rozběh/doběh
 int currentOutput = 0;                       // Aktuálny výstup po slew rate limiteri
 unsigned long lastLoopTime = 0;              // Pre výpočet delta time
 
@@ -121,7 +121,7 @@ void setup() {
     Serial.begin(115200);
 
     // Potenciometer pre nastavenie ramp-up času
-    pinMode(POT_PIN, INPUT);
+    pinMode(RAMP_POT_PIN, INPUT);
     
     // Inicializácia NeoPixel
     strip.begin();
@@ -231,15 +231,15 @@ void setup() {
 unsigned long readRampTime() {
     static bool initialized = false;
     static float filtered;
-    int raw = analogRead(RAMP_POT_PIN);
+    int raw = analogRead(POT_PIN);
     if (!initialized) {
         filtered = raw;
         initialized = true;
     }
     const float alpha = 0.12;
     filtered += alpha * (raw - filtered);
-    unsigned long ramp = map((int)filtered, 0, 1023, RAMP_MIN_TIME, RAMP_MAX_TIME);
-    return constrain(ramp, RAMP_MIN_TIME, RAMP_MAX_TIME);
+    unsigned long ramp = map((int)filtered, 0, 1023, RAMP_TIME_MIN, RAMP_TIME_MAX);
+    return constrain(ramp, RAMP_TIME_MIN, RAMP_TIME_MAX);
 }
 
 // Čítanie stavu prepínača
