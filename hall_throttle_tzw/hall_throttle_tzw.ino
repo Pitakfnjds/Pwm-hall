@@ -24,8 +24,8 @@ const unsigned long DEFAULT_RAMP_UP_TIME = 2000;   // 2 sekundy (0→100%)
 const int DEFAULT_MAX_PWM_PERCENT = 70;            // 70% — strop pre target
 
 // === PINY ===
-const int HALL_PIN = A0;      // Hall senzor vstup
-const int PWM_PIN = 5;        // PWM výstup (potrebuje 2kΩ pull-down!)
+const int HALL_PIN = A0;      // Hall senzor vstup (HW: R6 10kΩ pull-down + C5 100nF RC filter na PCB2)
+const int PWM_PIN = 5;        // PWM výstup (HW: R4||R5 = 2× 10kΩ pull-down na PCB2)
 const int DIR_PIN = 4;        // DIR výstup (smer otáčania)
 const int NEOPIXEL_PIN = 9;   // NeoPixel DIN
 const int LED_PIN = 13;       // Vstavaná LED na Nano
@@ -45,6 +45,7 @@ Adafruit_NeoPixel strip(NUM_LEDS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 const int DEADZONE_LOW = 5;    // Dolná mŕtva zóna [%]
 const int DEADZONE_HIGH = 95;  // Horná mŕtva zóna [%]
 const int BRIGHTNESS = 50;     // Jas LED (0-255)
+const int HALL_MARGIN = 30;    // ADC tolerancia za hranicami kalibrácie pred fault
 
 // === PWM VÝSTUP ===
 // Cytron MD30C: PWM rozsah 0-100%
@@ -90,6 +91,11 @@ int maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT;  // 0–100%, prepisuje sa v l
 
 // === OCHRANA PROTI REVERZU ZA CHODU ===
 SwitchState activeDirection = SW_STOP;       // Aktuálny aktívny smer motora
+
+// === DETEKCIA PORUCHY HALL SENZORA ===
+// Latch — ak raz ADC vyletí mimo platný rozsah, motor sa zablokuje až do
+// reštartu. Záchytí short na +5V/GND, odpadnutý vodič na rail.
+bool sensorFault = false;
 
 // === EEPROM FUNKCIE ===
 
@@ -470,12 +476,34 @@ void loop() {
     }
     
     // === NORMÁLNA PREVÁDZKA ===
-    
+
+    // === DETEKCIA PORUCHY HALL SENZORA ===
+    // ADC mimo kalibračného rozsahu (s marginom) ALEBO úplne na hrane (short na rail).
+    // Druhá podmienka je istota aj keď je kalibrácia veľmi voľná.
+    if (raw < 5 || raw > 1018 ||
+        raw < cal_min - HALL_MARGIN || raw > cal_max + HALL_MARGIN) {
+        if (!sensorFault) {
+            sensorFault = true;
+            Serial.println();
+            Serial.println(F("!!! HALL SENZOR PORUCHA - motor zablokovany !!!"));
+            Serial.print(F("ADC="));
+            Serial.print(raw);
+            Serial.print(F(" mimo ["));
+            Serial.print(cal_min);
+            Serial.print(F(","));
+            Serial.print(cal_max);
+            Serial.print(F("] +/- "));
+            Serial.println(HALL_MARGIN);
+            Serial.println(F("Restartuj na obnovenie cinnosti."));
+            Serial.println();
+        }
+    }
+
     // Mapovanie na 0-100%
     int raw_percent = map(raw, cal_min, cal_max, 0, 100);
     raw_percent = constrain(raw_percent, 0, 100);
-    
-    // Aplikácia deadzone
+
+    // Aplikácia deadzone (fault prepise throttle na 0 nizsie)
     int throttle;
     if (raw_percent <= DEADZONE_LOW) {
         throttle = 0;
@@ -483,6 +511,11 @@ void loop() {
         throttle = 100;
     } else {
         throttle = map(raw_percent, DEADZONE_LOW, DEADZONE_HIGH, 0, 100);
+    }
+
+    // Fail-safe: pri detegovanej poruche force throttle na 0
+    if (sensorFault) {
+        throttle = 0;
     }
     
     // === URČENIE CIEĽOVEJ HODNOTY PODĽA PREPÍNAČA ===
@@ -518,6 +551,12 @@ void loop() {
         activeDirection = switchState;
         target = throttle;
         stateStr = (switchState == SW_FORWARD) ? "FWD " : "REV ";
+    }
+
+    // Sensor fault prepise vsetko ostatne (throttle uz je 0 zhora)
+    if (sensorFault) {
+        target = 0;
+        stateStr = "SENS";
     }
 
     // === ČÍTANIE POTENCIOMETROV (A1 ramp-up, A2 PWM limit) ===
@@ -563,8 +602,15 @@ void loop() {
     setPWMOutput(output);
     digitalWrite(DIR_PIN, direction);
 
-    // Zobraz na NeoPixel
-    if (reverseBlocked) {
+    // Zobraz na NeoPixel (priorita: sensor fault > reverse block > normal)
+    if (sensorFault) {
+        // Kriticka porucha - rychle cervene blikanie (200ms)
+        bool blink = (millis() / 200) % 2;
+        for (int i = 0; i < NUM_LEDS; i++) {
+            strip.setPixelColor(i, blink ? strip.Color(255, 0, 0) : 0);
+        }
+        strip.show();
+    } else if (reverseBlocked) {
         // Varovné blikanie - oranžová = čakanie na zastavenie motora
         bool blink = (millis() / 150) % 2;
         for (int i = 0; i < NUM_LEDS; i++) {

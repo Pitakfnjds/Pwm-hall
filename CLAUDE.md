@@ -20,6 +20,7 @@ Modular 3-PCB system connected by JST-XH cables:
 |------|-------------|
 | `hall_throttle_tzw/hall_throttle_tzw.ino` | Main firmware (Arduino Nano) |
 | `MAGLEV_THROTTLE_PROJECT.md` | Complete technical documentation / knowledge base |
+| `PCB2_ZAPOJENIE_SPECIFIKACIA.md` | Authoritative PCB2 wiring spec: pinout, BOM, RC values, reasoning |
 | `pcbs/PCB1_SensorBoard/` | KiCad 9 PCB project for sensor board |
 | `easyeda-pcbs/` | Alternative PCB designs (EasyEDA format) |
 | `throttle_v8_2_*.scad` / `*.stl` | 3D mechanical parts (OpenSCAD) |
@@ -48,7 +49,9 @@ No automated build system – this is Arduino firmware.
 - **Dead zones:** 5% low, 95% high to prevent jitter.
 - **3-position rocker switch:** Forward (D2 LOW) / Neutral (both HIGH) / Reverse (D3 LOW). Physical rocker: always transitions through Neutral (1↔0↔2).
 - **Anti-plugging protection:** Direction change blocked while `currentOutput > 0`. Slew rate limiter ensures gradual stop before direction change is allowed. LED blinks orange during braking.
-- **Safety layers:** HW pull-downs on PWM line, FW validation of calibration data, out-of-range detection, neutral-cuts-motor, anti-plugging, slew rate limiter, PWM=0 at boot. Cytron MD30C adds HW overcurrent protection and regenerative braking.
+- **HW safety net (PCB2):** PWM line (D5) has 2× 10kΩ pull-down (R4‖R5, redundant for fail-open); Hall input (A0) has 10kΩ pull-down (R6) plus 100nF RC filter (C5, 159 Hz cutoff). A disconnected Hall cable pulls A0 to GND (raw≈0), preventing a floating-input false-throttle. See `PCB2_ZAPOJENIE_SPECIFIKACIA.md` for the full schematic.
+- **Safety layers:** HW pull-downs on PWM and Hall lines, FW validation of calibration data, out-of-range detection, neutral-cuts-motor, anti-plugging, slew rate limiter, PWM=0 at boot, Hall sensor fault detection. Cytron MD30C adds HW overcurrent protection and regenerative braking.
+- **Hall sensor fault detection:** Each loop, raw ADC is checked against `[cal_min - HALL_MARGIN, cal_max + HALL_MARGIN]` and against absolute rails `[5, 1018]`. On first violation, `sensorFault` latches: throttle is forced to 0, state shows `SENS`, NeoPixel pulses red (200 ms blink). The latch only clears on reboot. Combined with R6 pull-down on A0, this catches: wire disconnect (raw≈0), short to GND, short to +5V, and sensor output stuck at either rail. Does NOT catch sensor output stuck inside the calibrated band (a true sensor internal failure — would require redundant sensing).
 - **Hall sensor reading:** 10-sample average on A0 (10-bit ADC).
 
 ## Pin Assignments (Arduino Nano)
@@ -58,7 +61,7 @@ No automated build system – this is Arduino firmware.
 | A0 | Hall sensor analog input |
 | A1 | Potentiometer: ramp-up time (2s–4s), only when `USE_RAMPUP_POT` is defined |
 | A2 | Potentiometer: PWM limiter (30%–100%), only when `USE_PWM_LIMIT_POT` is defined |
-| D5 | PWM output to motor driver (with 2kΩ pull-down) |
+| D5 | PWM output to motor driver (HW: R4‖R5 = 2× 10kΩ pull-down on PCB2) |
 | D4 | DIR output to motor driver |
 | D2 | Switch forward position (INPUT_PULLUP, active LOW) |
 | D3 | Switch reverse position (INPUT_PULLUP, active LOW) |
