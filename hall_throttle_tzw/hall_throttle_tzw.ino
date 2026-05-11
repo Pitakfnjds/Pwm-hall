@@ -12,6 +12,17 @@
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
 
+// === KONFIGURÁCIA POTENCIOMETROV ===
+// Zakomentuj #define ak potenciometer NIE JE fyzicky pripojený.
+// Keď je zakomentovaný, použije sa DEFAULT konštanta nižšie.
+
+//#define USE_RAMPUP_POT      // A1: potenciometer pre ramp-up čas
+//#define USE_PWM_LIMIT_POT   // A2: potenciometer pre PWM limiter
+
+// === DEFAULT HODNOTY (keď pot nie je pripojený) ===
+const unsigned long DEFAULT_RAMP_UP_TIME = 2000;   // 2 sekundy (0→100%)
+const int DEFAULT_MAX_PWM_PERCENT = 70;            // 70% — strop pre target
+
 // === PINY ===
 const int HALL_PIN = A0;      // Hall senzor vstup
 const int PWM_PIN = 5;        // PWM výstup (potrebuje 2kΩ pull-down!)
@@ -19,6 +30,7 @@ const int DIR_PIN = 4;        // DIR výstup (smer otáčania)
 const int NEOPIXEL_PIN = 9;   // NeoPixel DIN
 const int LED_PIN = 13;       // Vstavaná LED na Nano
 const int RAMP_POT_PIN = A1;       // potenciometer pre nastavenie rampup času
+const int PWM_LIMIT_POT = A2;      // potenciometer pre PWM limiter (strop výstupu)
 
 // === PREPÍNAČ (ENABLE + SMER) ===
 const int SW_FWD_PIN = 2;     // Poloha 1 = dopredu (A1, červený)
@@ -63,13 +75,20 @@ bool calibrated = false;
 unsigned long cal_start = 0;
 const int CAL_TIME = 5000;  // 5 sekúnd
 
-// === SLEW RATE LIMITER (POSTUPNÝ ROZBEH + DOBEH) ===
-unsigned long RAMP_UP_TIME = 800;     // ms z 0% na 100%
-const unsigned long RAMP_DOWN_TIME = 800;   // ms zo 100% na 0%
-const unsigned long RAMP_MIN_TIME = 200;  // Min. čas pro rozběh/doběh
-const unsigned long RAMP_MAX_TIME = 2000; // Max. čas pro rozběh/doběh
-int currentOutput = 0;                       // Aktuálny výstup po slew rate limiteri
-unsigned long lastLoopTime = 0;              // Pre výpočet delta time
+// === SLEW RATE LIMITER (LINEÁRNY ROZBEH + EXPONENCIÁLNY DOBEH) ===
+unsigned long RAMP_UP_TIME = DEFAULT_RAMP_UP_TIME;  // ms z 0% na 100% (lineárny ramp-up)
+const unsigned long RAMP_MIN_TIME = 3000;  // Min. čas pre rozbeh (s potom A1)
+const unsigned long RAMP_MAX_TIME = 10000; // Max. čas pre rozbeh (s potom A1)
+int currentOutput = 0;                     // Aktuálny výstup po slew rate limiteri [%]
+unsigned long lastLoopTime = 0;            // Pre výpočet delta time
+
+// Exponenciálny dobeh — regeneratívne brzdenie do batérie
+const float RAMP_DOWN_DECAY = 0.80f;       // Každý krok zachová 80% z aktuálnej hodnoty
+const unsigned long RAMP_DOWN_INTERVAL = 200;  // ms medzi krokmi dobehu
+unsigned long lastRampDownTime = 0;
+
+// PWM limiter — strop pre target (aplikuje sa PRED slew rate limiterom)
+int maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT;  // 0–100%, prepisuje sa v loop()
 
 // === OCHRANA PROTI REVERZU ZA CHODU ===
 SwitchState activeDirection = SW_STOP;       // Aktuálny aktívny smer motora
@@ -120,8 +139,9 @@ void setup() {
     
     Serial.begin(115200);
 
-    // Potenciometer pre nastavenie ramp-up času
+    // Potenciometre (A1 = ramp-up, A2 = PWM limiter)
     pinMode(RAMP_POT_PIN, INPUT);
+    pinMode(PWM_LIMIT_POT, INPUT);
     
     // Inicializácia NeoPixel
     strip.begin();
@@ -137,11 +157,27 @@ void setup() {
     Serial.println();
     Serial.println("Prepinac: 1=DOPREDU, 0=STOP, 2=DOZADU");
     Serial.println("Rekalibracia: prepinac v polohe 2 pri starte");
-    Serial.print("Rozbeh: ");
-    Serial.print(RAMP_UP_TIME / 1000.0, 1);
-    Serial.print("s  Dobeh: ");
-    Serial.print(RAMP_DOWN_TIME / 1000.0, 1);
-    Serial.println("s");
+    Serial.println();
+    Serial.println("=== KONFIGURACIA ===");
+#ifdef USE_RAMPUP_POT
+    Serial.print("Ramp-up: POT A1 (");
+    Serial.print(RAMP_MIN_TIME / 1000);
+    Serial.print("-");
+    Serial.print(RAMP_MAX_TIME / 1000);
+    Serial.println("s)");
+#else
+    Serial.print("Ramp-up: FIXNA ");
+    Serial.print(DEFAULT_RAMP_UP_TIME);
+    Serial.println("ms");
+#endif
+#ifdef USE_PWM_LIMIT_POT
+    Serial.println("PWM limit: POT A2 (30-100%)");
+#else
+    Serial.print("PWM limit: FIXNA ");
+    Serial.print(DEFAULT_MAX_PWM_PERCENT);
+    Serial.println("%");
+#endif
+    Serial.println("Ramp-down: EXPONENCIALNY (80% kazdych 200ms)");
     Serial.println();
 
     lastLoopTime = millis();
@@ -284,10 +320,21 @@ void showOnStrip(int percent, SwitchState state) {
         return;
     }
     
-    int numLit = (percent * NUM_LEDS) / 100;
-    int partial = ((percent * NUM_LEDS) % 100) * 255 / 100;
-    uint32_t color = getColor(percent);
-    
+    // Škálovanie na aktuálny PWM limit — 100% LED stĺpca = maxAllowedThrottle.
+    // Vďaka tomu jazdec aj pri zníženom limite vidí "plnú červenú" pri max. dosiahnuteľnom
+    // výkone a vie rozlíšiť, že obmedzovač (pot A2 / DEFAULT_MAX_PWM_PERCENT) je aktívny.
+    int displayPercent;
+    if (maxAllowedThrottle > 0) {
+        displayPercent = (int)((long)percent * 100 / maxAllowedThrottle);
+        if (displayPercent > 100) displayPercent = 100;
+    } else {
+        displayPercent = 0;
+    }
+
+    int numLit = (displayPercent * NUM_LEDS) / 100;
+    int partial = ((displayPercent * NUM_LEDS) % 100) * 255 / 100;
+    uint32_t color = getColor(displayPercent);
+
     // Ak je REVERSE, ukáž fialovú namiesto zelenej-červenej
     if (state == SW_REVERSE) {
         color = strip.Color(128, 0, 128);  // Fialová = dozadu
@@ -481,25 +528,42 @@ void loop() {
         stateStr = (switchState == SW_FORWARD) ? "FWD " : "REV ";
     }
 
-    unsigned long rampTime = readRampTime();
-    RAMP_UP_TIME = rampTime;
+    // === ČÍTANIE POTENCIOMETROV (A1 ramp-up, A2 PWM limit) ===
+#ifdef USE_RAMPUP_POT
+    RAMP_UP_TIME = readRampTime();
+#else
+    RAMP_UP_TIME = DEFAULT_RAMP_UP_TIME;
+#endif
+
+#ifdef USE_PWM_LIMIT_POT
+    int potValue = analogRead(PWM_LIMIT_POT);
+    maxAllowedThrottle = map(potValue, 0, 1023, 30, 100);  // 30–100%
+#else
+    maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT;
+#endif
+
+    // === PWM LIMITER — strop PRED slew rate limiterom ===
+    if (target > maxAllowedThrottle) target = maxAllowedThrottle;
+
     // === SLEW RATE LIMITER ===
     unsigned long now = millis();
     unsigned long dt = now - lastLoopTime;
     lastLoopTime = now;
 
     if (currentOutput < target) {
-        // Rozbeh — stúpanie k cieľu
+        // Rozbeh — LINEÁRNE stúpanie k cieľu (čas riadi RAMP_UP_TIME)
         int maxIncrease = (int)((long)100 * dt / RAMP_UP_TIME);
         if (maxIncrease < 1) maxIncrease = 1;
         currentOutput += maxIncrease;
         if (currentOutput > target) currentOutput = target;
     } else if (currentOutput > target) {
-        // Dobeh — klesanie k cieľu
-        int maxDecrease = (int)((long)100 * dt / RAMP_DOWN_TIME);
-        if (maxDecrease < 1) maxDecrease = 1;
-        currentOutput -= maxDecrease;
-        if (currentOutput < target) currentOutput = target;
+        // Dobeh — EXPONENCIÁLNY (každých RAMP_DOWN_INTERVAL ms: *DECAY)
+        if (now - lastRampDownTime >= RAMP_DOWN_INTERVAL) {
+            lastRampDownTime = now;
+            currentOutput = (int)(currentOutput * RAMP_DOWN_DECAY);
+            if (currentOutput < 2) currentOutput = 0;  // pod 2% už motor netiahne
+            if (currentOutput < target) currentOutput = target;
+        }
     }
 
     int output = currentOutput;
