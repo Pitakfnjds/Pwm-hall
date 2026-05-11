@@ -77,15 +77,13 @@ const int CAL_TIME = 5000;  // 5 sekúnd
 
 // === SLEW RATE LIMITER (LINEÁRNY ROZBEH + EXPONENCIÁLNY DOBEH) ===
 unsigned long RAMP_UP_TIME = DEFAULT_RAMP_UP_TIME;  // ms z 0% na 100% (lineárny ramp-up)
-const unsigned long RAMP_MIN_TIME = 3000;  // Min. čas pre rozbeh (s potom A1)
-const unsigned long RAMP_MAX_TIME = 10000; // Max. čas pre rozbeh (s potom A1)
 int currentOutput = 0;                     // Aktuálny výstup po slew rate limiteri [%]
 unsigned long lastLoopTime = 0;            // Pre výpočet delta time
 
-// Exponenciálny dobeh — regeneratívne brzdenie do batérie
-const float RAMP_DOWN_DECAY = 0.80f;       // Každý krok zachová 80% z aktuálnej hodnoty
-const unsigned long RAMP_DOWN_INTERVAL = 200;  // ms medzi krokmi dobehu
-unsigned long lastRampDownTime = 0;
+// Exponenciálny dobeh — SPOJITÁ exponenciála: currentOutput *= DECAY^(dt/INTERVAL_MS)
+// Pri DECAY=0.85 a INTERVAL=300ms: 80% → 10% za ~3.9 s, 100% → 0 za ~5.4 s
+const float RAMP_DOWN_DECAY = 0.85f;
+const unsigned long RAMP_DOWN_INTERVAL_MS = 300;
 
 // PWM limiter — strop pre target (aplikuje sa PRED slew rate limiterom)
 int maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT;  // 0–100%, prepisuje sa v loop()
@@ -160,11 +158,7 @@ void setup() {
     Serial.println();
     Serial.println("=== KONFIGURACIA ===");
 #ifdef USE_RAMPUP_POT
-    Serial.print("Ramp-up: POT A1 (");
-    Serial.print(RAMP_MIN_TIME / 1000);
-    Serial.print("-");
-    Serial.print(RAMP_MAX_TIME / 1000);
-    Serial.println("s)");
+    Serial.println("Ramp-up: POT A1 (2-4s)");
 #else
     Serial.print("Ramp-up: FIXNA ");
     Serial.print(DEFAULT_RAMP_UP_TIME);
@@ -177,7 +171,7 @@ void setup() {
     Serial.print(DEFAULT_MAX_PWM_PERCENT);
     Serial.println("%");
 #endif
-    Serial.println("Ramp-down: EXPONENCIALNY (80% kazdych 200ms)");
+    Serial.println("Ramp-down: EXP spojita (DECAY=0.85, INTERVAL=300ms, ~5.4s plne->0)");
     Serial.println();
 
     lastLoopTime = millis();
@@ -263,7 +257,7 @@ void setup() {
     }
 }
 
-// Čítanie ramp-up času z potenciometra alpha je sila filtra
+// Čítanie ramp-up času z potenciometra A1 (2 – 4 s, IIR vyhladené)
 unsigned long readRampTime() {
     static bool initialized = false;
     static float filtered;
@@ -272,10 +266,8 @@ unsigned long readRampTime() {
         filtered = raw;
         initialized = true;
     }
-    const float alpha = 0.12;
-    filtered += alpha * (raw - filtered);
-    unsigned long ramp = map((int)filtered, 0, 1023, RAMP_MIN_TIME, RAMP_MAX_TIME);
-    return constrain(ramp, RAMP_MIN_TIME, RAMP_MAX_TIME);
+    filtered += 0.12f * (raw - filtered);
+    return map((int)filtered, 0, 1023, 2000, 4000);
 }
 
 // Čítanie stavu prepínača
@@ -557,13 +549,12 @@ void loop() {
         currentOutput += maxIncrease;
         if (currentOutput > target) currentOutput = target;
     } else if (currentOutput > target) {
-        // Dobeh — EXPONENCIÁLNY (každých RAMP_DOWN_INTERVAL ms: *DECAY)
-        if (now - lastRampDownTime >= RAMP_DOWN_INTERVAL) {
-            lastRampDownTime = now;
-            currentOutput = (int)(currentOutput * RAMP_DOWN_DECAY);
-            if (currentOutput < 2) currentOutput = 0;  // pod 2% už motor netiahne
-            if (currentOutput < target) currentOutput = target;
-        }
+        // Dobeh — SPOJITÁ exponenciála: currentOutput *= DECAY^(dt/INTERVAL_MS)
+        // Žiadne skoky, vyhladzuje sa cez existujúci dt z hlavného slew rate timeru.
+        float factor = pow(RAMP_DOWN_DECAY, (float)dt / RAMP_DOWN_INTERVAL_MS);
+        currentOutput = (int)(currentOutput * factor);
+        if (currentOutput < 2) currentOutput = 0;  // pod 2% už motor netiahne
+        if (currentOutput < target) currentOutput = target;
     }
 
     int output = currentOutput;

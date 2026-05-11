@@ -39,9 +39,9 @@ No automated build system – this is Arduino firmware.
 
 - **Motor driver:** Cytron MD30C, sign-magnitude mode (PWM + DIR). PWM 0–100% (0–255).
 - **Slew rate limiter:** Linear ramp-up (configurable via `RAMP_UP_TIME`, default 2s) and exponential ramp-down. Applies to all transitions including STOP.
-- **Exponential ramp-down:** When throttle released or target drops, `currentOutput *= RAMP_DOWN_DECAY` (0.80) every `RAMP_DOWN_INTERVAL` (200 ms). Reaches 0 in ~3.5 s from full power. Smoother regenerative braking, more energy recovered to battery.
+- **Exponential ramp-down:** Continuous decay every loop tick: `currentOutput *= RAMP_DOWN_DECAY^(dt/RAMP_DOWN_INTERVAL_MS)` (0.85 per 300 ms). 80%→10% in ~3.9 s, full→0 in ~5.4 s. Smooth (no discrete steps), reuses the existing `dt` from the slew rate limiter. Maximizes regenerative energy back into the battery.
 - **PWM limiter:** Hard cap on `target` applied BEFORE slew rate limiter. Driver by `DEFAULT_MAX_PWM_PERCENT` (70%) or pot on A2 (30–100%) when `USE_PWM_LIMIT_POT` is defined. Prevents inefficient full-throttle (I²R losses grow with current²).
-- **Ramp-up pot (A1):** When `USE_RAMPUP_POT` is defined, A1 sets ramp-up time 3s–10s with IIR-smoothed reading. Otherwise fixed `DEFAULT_RAMP_UP_TIME` (2000 ms).
+- **Ramp-up pot (A1):** When `USE_RAMPUP_POT` is defined, A1 sets ramp-up time 2s–4s with IIR-smoothed reading. Otherwise fixed `DEFAULT_RAMP_UP_TIME` (2000 ms).
 - **Compile-time pot switches:** `USE_RAMPUP_POT` and `USE_PWM_LIMIT_POT` (both commented out by default) allow flashing the firmware without physical pots wired — falls back to DEFAULT constants. Toggle by uncommenting and recompiling.
 - **LED scaling to limiter:** NeoPixel bar shows `currentOutput` scaled to `maxAllowedThrottle` (not to absolute 100%). At maximum reachable output the bar is full red even when limiter is below 100% — driver visually sees they are at the cap.
 - **EEPROM calibration system:** First boot runs 5-second auto-calibration (user presses throttle min/max). Subsequent boots load from EEPROM. Force recalibration by holding switch in position 2 at startup.
@@ -56,7 +56,7 @@ No automated build system – this is Arduino firmware.
 | Pin | Function |
 |-----|----------|
 | A0 | Hall sensor analog input |
-| A1 | Potentiometer: ramp-up time (3s–10s), only when `USE_RAMPUP_POT` is defined |
+| A1 | Potentiometer: ramp-up time (2s–4s), only when `USE_RAMPUP_POT` is defined |
 | A2 | Potentiometer: PWM limiter (30%–100%), only when `USE_PWM_LIMIT_POT` is defined |
 | D5 | PWM output to motor driver (with 2kΩ pull-down) |
 | D4 | DIR output to motor driver |
