@@ -187,8 +187,6 @@ void setup() {
     Serial.println("Ramp-down: EXP spojita (DECAY=0.85, INTERVAL=300ms, ~5.4s plne->0)");
     Serial.println();
 
-    lastLoopTime = millis();
-    
     // Animácia pri štarte
     /*for (int i = 0; i < NUM_LEDS; i++) {
         strip.setPixelColor(i, strip.Color(0, 255, 0));
@@ -268,6 +266,11 @@ void setup() {
         Serial.println("-------------------------------------------");
         Serial.println();
     }
+
+    // Resetuj dt-base AŽ TERAZ — všetky štartové animácie (cal blik, EEPROM
+    // green/fialova) sú za nami. Inak by prvá loop() iter dostala dt=600-1400ms
+    // a slew-rate limiter by skočil výstup, ak by user držal plyn pri zapnutí.
+    lastLoopTime = millis();
 
     // Zapni watchdog — od teraz loop() musí volať wdt_reset() pred uplynutím 2s,
     // inak sa MCU reštartuje (a PWM=0 znova na začiatku setup()).
@@ -488,8 +491,12 @@ void loop() {
             Serial.println("======================================");
             Serial.println();
         }
-        
+
         delay(200);
+        // Resetuj dt-base — bez tohto by prvá normálna iter po cal dostala
+        // dt=5s+ (celá cal-doba), čo by slew-rate limiter okamžite preskočil
+        // a motor by pri prvom plyne škubol.
+        lastLoopTime = millis();
         return;
     }
     
