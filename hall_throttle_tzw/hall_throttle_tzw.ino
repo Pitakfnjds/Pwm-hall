@@ -124,10 +124,6 @@ bool eepromLoadCalibration(int &minVal, int &maxVal) {
     return true;
 }
 
-void eepromClearCalibration() {
-    EEPROM.write(EEPROM_ADDR_MAGIC, 0xFF);
-}
-
 void setup() {
     // !!! KRITICKÉ: WDT vypnúť hneď po reštarte !!!
     // Po WDT-reset môže byť watchdog stále zapnutý — ak je timeout
@@ -205,8 +201,10 @@ void setup() {
     if (forceRecalibrate) {
         Serial.println(">>> Prepinac v polohe 2 = VYNUTENA REKALIBRACIA");
         Serial.println();
-        eepromClearCalibration();
-        
+        // NEMAŽEME EEPROM teraz — ak user vypne počas cal alebo cal zlyhá,
+        // stará kalibrácia ostane platná. Nová cal ju prepíše atomicky cez
+        // eepromSaveCalibration() až po úspešnom dokončení.
+
         // Fialová animácia = rekalibrácia
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < NUM_LEDS; j++) {
