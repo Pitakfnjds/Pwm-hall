@@ -171,30 +171,30 @@ void setup() {
     strip.show();
     
     Serial.println();
-    Serial.println("===========================================");
-    Serial.println("  MagLev Throttle - Cytron MD30C");
-    Serial.println("  s 3-polohovym prepinacom + EEPROM");
-    Serial.println("===========================================");
+    Serial.println(F("==========================================="));
+    Serial.println(F("  MagLev Throttle - Cytron MD30C"));
+    Serial.println(F("  s 3-polohovym prepinacom + EEPROM"));
+    Serial.println(F("==========================================="));
     Serial.println();
-    Serial.println("Prepinac: 1=DOPREDU, 0=STOP, 2=DOZADU");
-    Serial.println("Rekalibracia: prepinac v polohe 2 pri starte");
+    Serial.println(F("Prepinac: 1=DOPREDU, 0=STOP, 2=DOZADU"));
+    Serial.println(F("Rekalibracia: prepinac v polohe 2 pri starte"));
     Serial.println();
-    Serial.println("=== KONFIGURACIA ===");
+    Serial.println(F("=== KONFIGURACIA ==="));
 #ifdef USE_RAMPUP_POT
-    Serial.println("Ramp-up: POT A1 (2-4s)");
+    Serial.println(F("Ramp-up: POT A1 (2-4s)"));
 #else
-    Serial.print("Ramp-up: FIXNA ");
+    Serial.print(F("Ramp-up: FIXNA "));
     Serial.print(DEFAULT_RAMP_UP_TIME);
-    Serial.println("ms");
+    Serial.println(F("ms"));
 #endif
 #ifdef USE_PWM_LIMIT_POT
-    Serial.println("PWM limit: POT A2 (30-100%)");
+    Serial.println(F("PWM limit: POT A2 (30-100%)"));
 #else
-    Serial.print("PWM limit: FIXNA ");
+    Serial.print(F("PWM limit: FIXNA "));
     Serial.print(DEFAULT_MAX_PWM_PERCENT);
-    Serial.println("%");
+    Serial.println(F("%"));
 #endif
-    Serial.println("Ramp-down: EXP spojita (DECAY=0.85, INTERVAL=300ms, ~5.4s plne->0)");
+    Serial.println(F("Ramp-down: EXP spojita (DECAY=0.85, INTERVAL=300ms, ~5.4s plne->0)"));
     Serial.println();
 
     // Animácia pri štarte
@@ -213,7 +213,7 @@ void setup() {
     bool forceRecalibrate = (digitalRead(SW_REV_PIN) == LOW);  // Poloha 2
     
     if (forceRecalibrate) {
-        Serial.println(">>> Prepinac v polohe 2 = VYNUTENA REKALIBRACIA");
+        Serial.println(F(">>> Prepinac v polohe 2 = VYNUTENA REKALIBRACIA"));
         Serial.println();
         // NEMAŽEME EEPROM teraz — ak user vypne počas cal alebo cal zlyhá,
         // stará kalibrácia ostane platná. Nová cal ju prepíše atomicky cez
@@ -236,22 +236,22 @@ void setup() {
         // EEPROM má platné dáta → použiť
         calibrated = true;
         
-        Serial.println("=========== EEPROM KALIBRACIA ===========");
-        Serial.print("MIN: ");
+        Serial.println(F("=========== EEPROM KALIBRACIA ==========="));
+        Serial.print(F("MIN: "));
         Serial.print(cal_min);
-        Serial.print(" (");
+        Serial.print(F(" ("));
         Serial.print(cal_min * 5.0 / 1023.0, 3);
-        Serial.println(" V)");
-        Serial.print("MAX: ");
+        Serial.println(F(" V)"));
+        Serial.print(F("MAX: "));
         Serial.print(cal_max);
-        Serial.print(" (");
+        Serial.print(F(" ("));
         Serial.print(cal_max * 5.0 / 1023.0, 3);
-        Serial.println(" V)");
-        Serial.print("Rozsah ADC: ");
+        Serial.println(F(" V)"));
+        Serial.print(F("Rozsah ADC: "));
         Serial.println(cal_max - cal_min);
-        Serial.println("==========================================");
+        Serial.println(F("=========================================="));
         Serial.println();
-        Serial.println("Pripraveny! (Pre rekalibraciu: prepni na 2 a restartuj)");
+        Serial.println(F("Pripraveny! (Pre rekalibraciu: prepni na 2 a restartuj)"));
         Serial.println();
         
         // Zelený blik = hotovo
@@ -273,9 +273,9 @@ void setup() {
         cal_max = 0;
         cal_start = millis();
         
-        Serial.println("-------------------------------------------");
-        Serial.println("KALIBRACIA: Stlacaj tlacidlo 5 sekund!");
-        Serial.println("-------------------------------------------");
+        Serial.println(F("-------------------------------------------"));
+        Serial.println(F("KALIBRACIA: Stlacaj tlacidlo 5 sekund!"));
+        Serial.println(F("-------------------------------------------"));
         Serial.println();
     }
 
@@ -428,13 +428,13 @@ void loop() {
         showCalibration();
         setPWMOutput(0);  // Motor STOP počas kalibrácie
         
-        Serial.print("Kalibracia... ");
+        Serial.print(F("Kalibracia... "));
         Serial.print(remaining);
-        Serial.print("s | MIN:");
+        Serial.print(F("s | MIN:"));
         Serial.print(cal_min);
-        Serial.print(" MAX:");
+        Serial.print(F(" MAX:"));
         Serial.print(cal_max);
-        Serial.print(" | Teraz:");
+        Serial.print(F(" | Teraz:"));
         Serial.println(raw);
         
         if (millis() - cal_start >= CAL_TIME) {
@@ -442,9 +442,9 @@ void loop() {
             
             if (range < 50) {
                 Serial.println();
-                Serial.println("!!! VAROVANIE: Maly rozsah !!!");
-                Serial.println("Stlacal si tlacidlo pocas kalibracie?");
-                Serial.println("Restartujem kalibraciu...");
+                Serial.println(F("!!! VAROVANIE: Maly rozsah !!!"));
+                Serial.println(F("Stlacal si tlacidlo pocas kalibracie?"));
+                Serial.println(F("Restartujem kalibraciu..."));
                 Serial.println();
                 
                 // Červený blik = chyba
@@ -487,21 +487,21 @@ void loop() {
             }
             
             Serial.println();
-            Serial.println("====== KALIBRACIA OK + ULOZENA ======");
-            Serial.print("MIN: ");
+            Serial.println(F("====== KALIBRACIA OK + ULOZENA ======"));
+            Serial.print(F("MIN: "));
             Serial.print(cal_min);
-            Serial.print(" (");
+            Serial.print(F(" ("));
             Serial.print(cal_min * 5.0 / 1023.0, 3);
-            Serial.println(" V)");
-            Serial.print("MAX: ");
+            Serial.println(F(" V)"));
+            Serial.print(F("MAX: "));
             Serial.print(cal_max);
-            Serial.print(" (");
+            Serial.print(F(" ("));
             Serial.print(cal_max * 5.0 / 1023.0, 3);
-            Serial.println(" V)");
-            Serial.print("Rozsah ADC: ");
+            Serial.println(F(" V)"));
+            Serial.print(F("Rozsah ADC: "));
             Serial.println(range);
-            Serial.println("Ulozene do EEPROM!");
-            Serial.println("======================================");
+            Serial.println(F("Ulozene do EEPROM!"));
+            Serial.println(F("======================================"));
             Serial.println();
         }
 
@@ -682,24 +682,24 @@ void loop() {
     int pwmValue = map(output, 0, 100, PWM_MIN, PWM_MAX);
     float duty_cycle = pwmValue * 100.0 / 255.0;
     
-    Serial.print("[");
+    Serial.print(F("["));
     Serial.print(stateStr);
-    Serial.print("] ");
+    Serial.print(F("] "));
     Serial.print(output);
-    Serial.print("%");
+    Serial.print(F("%"));
     if (output != target) {
-        Serial.print(output < target ? "^" : "v");
+        Serial.print(output < target ? F("^") : F("v"));
         Serial.print(target);
-        Serial.print("%");
+        Serial.print(F("%"));
     }
-    Serial.print("\t-> PWM:");
+    Serial.print(F("\t-> PWM:"));
     Serial.print(pwmValue);
-    Serial.print("/255 (");
+    Serial.print(F("/255 ("));
     Serial.print(duty_cycle, 1);
-    Serial.print("%)");
-    Serial.print("\t(ADC:");
+    Serial.print(F("%)"));
+    Serial.print(F("\t(ADC:"));
     Serial.print(raw);
-    Serial.println(")");
+    Serial.println(F(")"));
     
     delay(50);
 }
