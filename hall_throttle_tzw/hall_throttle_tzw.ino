@@ -68,6 +68,7 @@ enum SwitchState {
 const int EEPROM_ADDR_MAGIC = 0;    // Adresa: magický bajt (1 bajt)
 const int EEPROM_ADDR_CAL_MIN = 1;  // Adresa: cal_min (2 bajty, int)
 const int EEPROM_ADDR_CAL_MAX = 3;  // Adresa: cal_max (2 bajty, int)
+const int EEPROM_ADDR_CRC = 5;      // Adresa: XOR checksum cal-dát (1 bajt)
 const byte EEPROM_MAGIC = 0xCA;     // "CA" = CAlibration marker
 
 // === KALIBRÁCIA ===
@@ -104,23 +105,36 @@ bool eepromHasCalibration() {
     return EEPROM.read(EEPROM_ADDR_MAGIC) == EEPROM_MAGIC;
 }
 
+// XOR checksum cal-dát — chytí náhodné bit-flipy aj 1/256 false-positive
+// magic-bytu pri neinicializovanej EEPROM (kde by sa náhodne nakreslilo 0xCA).
+byte calculateChecksum(int minVal, int maxVal) {
+    uint16_t a = (uint16_t)minVal;
+    uint16_t b = (uint16_t)maxVal;
+    return (byte)(a ^ (a >> 8) ^ b ^ (b >> 8));
+}
+
 void eepromSaveCalibration(int minVal, int maxVal) {
     EEPROM.write(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
     EEPROM.put(EEPROM_ADDR_CAL_MIN, minVal);
     EEPROM.put(EEPROM_ADDR_CAL_MAX, maxVal);
+    EEPROM.write(EEPROM_ADDR_CRC, calculateChecksum(minVal, maxVal));
 }
 
 bool eepromLoadCalibration(int &minVal, int &maxVal) {
     if (!eepromHasCalibration()) return false;
-    
+
     EEPROM.get(EEPROM_ADDR_CAL_MIN, minVal);
     EEPROM.get(EEPROM_ADDR_CAL_MAX, maxVal);
-    
+
+    // CRC verifikácia PRED range checkmi — chytí bit-flip aj falošný magic.
+    byte storedCrc = EEPROM.read(EEPROM_ADDR_CRC);
+    if (storedCrc != calculateChecksum(minVal, maxVal)) return false;
+
     // Kontrola validity (rozumné hodnoty pre 10-bit ADC)
     if (minVal < 0 || minVal > 1023) return false;
     if (maxVal < 0 || maxVal > 1023) return false;
     if (maxVal - minVal < 50) return false;  // Príliš malý rozsah
-    
+
     return true;
 }
 

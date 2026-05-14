@@ -45,7 +45,7 @@ No automated build system – this is Arduino firmware.
 - **Ramp-up pot (A1):** When `USE_RAMPUP_POT` is defined, A1 sets ramp-up time 2s–4s with IIR-smoothed reading. Otherwise fixed `DEFAULT_RAMP_UP_TIME` (2000 ms).
 - **Compile-time pot switches:** `USE_RAMPUP_POT` and `USE_PWM_LIMIT_POT` (both commented out by default) allow flashing the firmware without physical pots wired — falls back to DEFAULT constants. Toggle by uncommenting and recompiling.
 - **LED scaling to limiter:** NeoPixel bar shows `currentOutput` scaled to `maxAllowedThrottle` (not to absolute 100%). At maximum reachable output the bar is full red even when limiter is below 100% — driver visually sees they are at the cap.
-- **EEPROM calibration system:** First boot runs 5-second auto-calibration (user presses throttle min/max). Subsequent boots load from EEPROM. Force recalibration by holding switch in position 2 at startup.
+- **EEPROM calibration system:** First boot runs 5-second auto-calibration (user presses throttle min/max). Subsequent boots load from EEPROM and verify a 1-byte XOR checksum over `cal_min`/`cal_max` (rejects bit-flips and stray-magic-byte coincidences from foreign firmware → triggers re-cal). Force recalibration by holding switch in position 2 at startup; the old EEPROM cal is kept until the new cal completes (atomic overwrite via `eepromSaveCalibration`).
 - **Dead zones:** 5% low, 95% high to prevent jitter.
 - **3-position rocker switch:** Forward (D2 LOW) / Neutral (both HIGH) / Reverse (D3 LOW). Physical rocker: always transitions through Neutral (1↔0↔2).
 - **Anti-plugging protection:** Direction change blocked while `currentOutput > 0`. Slew rate limiter ensures gradual stop before direction change is allowed. LED blinks orange during braking.
