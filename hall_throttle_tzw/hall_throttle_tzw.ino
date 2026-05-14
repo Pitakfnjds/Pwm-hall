@@ -11,6 +11,7 @@
 
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 // === KONFIGURÁCIA POTENCIOMETROV ===
 // Zakomentuj #define ak potenciometer NIE JE fyzicky pripojený.
@@ -128,6 +129,12 @@ void eepromClearCalibration() {
 }
 
 void setup() {
+    // !!! KRITICKÉ: WDT vypnúť hneď po reštarte !!!
+    // Po WDT-reset môže byť watchdog stále zapnutý — ak je timeout
+    // kratší ako bootloader (Old Bootloader Optiboot), vznikne reset loop.
+    // wdt_disable() musí byť absolútne prvý, pred akoukoľvek prácou.
+    wdt_disable();
+
     // !!! KRITICKÉ: PWM = 0 HNEĎ PRI ŠTARTE !!!
     pinMode(PWM_PIN, OUTPUT);
     analogWrite(PWM_PIN, 0);  // Motor STOP okamžite!
@@ -261,6 +268,12 @@ void setup() {
         Serial.println("-------------------------------------------");
         Serial.println();
     }
+
+    // Zapni watchdog — od teraz loop() musí volať wdt_reset() pred uplynutím 2s,
+    // inak sa MCU reštartuje (a PWM=0 znova na začiatku setup()).
+    // WDTO_2S (nie 1s) je úmyselne — pri Old Bootloader (ATmegaBOOT, ~1s timeout)
+    // by tesné WDTO_1S mohlo skončiť v reset-loope (race s bootloader handoff).
+    wdt_enable(WDTO_2S);
 }
 
 // Čítanie ramp-up času z potenciometra A1 (2 – 4 s, IIR vyhladené)
@@ -375,6 +388,9 @@ void setPWMOutput(int percent) {
 }
 
 void loop() {
+    // Watchdog reset — musí padnúť pred uplynutím WDTO_2S, inak MCU reštart.
+    wdt_reset();
+
     // Čítaj ADC (priemer z 10 vzoriek)
     long sum = 0;
     for (int i = 0; i < 10; i++) {
@@ -425,6 +441,7 @@ void loop() {
                     strip.clear();
                     strip.show();
                     delay(100);
+                    wdt_reset();  // blokujúca animácia 5×200ms — preventívny reset
                 }
                 
                 // Reset kalibrácie a skús znova
@@ -450,6 +467,7 @@ void loop() {
                 strip.clear();
                 strip.show();
                 delay(150);
+                wdt_reset();  // blokujúca animácia 3×300ms — preventívny reset
             }
             
             Serial.println();
