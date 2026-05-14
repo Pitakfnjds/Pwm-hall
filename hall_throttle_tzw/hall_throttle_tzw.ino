@@ -79,7 +79,7 @@ const int CAL_TIME = 5000;  // 5 sekúnd
 
 // === SLEW RATE LIMITER (LINEÁRNY ROZBEH + EXPONENCIÁLNY DOBEH) ===
 unsigned long RAMP_UP_TIME = DEFAULT_RAMP_UP_TIME;  // ms z 0% na 100% (lineárny ramp-up)
-int currentOutput = 0;                     // Aktuálny výstup po slew rate limiteri [%]
+float currentOutput = 0.0f;                // Aktuálny výstup po slew rate limiteri [%] — float kvôli presnosti ramp-u
 unsigned long lastLoopTime = 0;            // Pre výpočet delta time
 
 // Exponenciálny dobeh — SPOJITÁ exponenciála: currentOutput *= DECAY^(dt/INTERVAL_MS)
@@ -601,20 +601,19 @@ void loop() {
 
     if (currentOutput < target) {
         // Rozbeh — LINEÁRNE stúpanie k cieľu (čas riadi RAMP_UP_TIME)
-        int maxIncrease = (int)((long)100 * dt / RAMP_UP_TIME);
-        if (maxIncrease < 1) maxIncrease = 1;
-        currentOutput += maxIncrease;
+        // Float zachová zlomky — pri RAMP_UP_TIME=2000ms a dt=50ms je krok presne 2.5%/iter.
+        currentOutput += 100.0f * dt / RAMP_UP_TIME;
         if (currentOutput > target) currentOutput = target;
     } else if (currentOutput > target) {
         // Dobeh — SPOJITÁ exponenciála: currentOutput *= DECAY^(dt/INTERVAL_MS)
         // Žiadne skoky, vyhladzuje sa cez existujúci dt z hlavného slew rate timeru.
         float factor = pow(RAMP_DOWN_DECAY, (float)dt / RAMP_DOWN_INTERVAL_MS);
-        currentOutput = (int)(currentOutput * factor);
-        if (currentOutput < 2) currentOutput = 0;  // pod 2% už motor netiahne
+        currentOutput *= factor;
+        if (currentOutput < 2.0f) currentOutput = 0.0f;  // pod 2% už motor netiahne — snap na presnú 0 pre anti-plug check
         if (currentOutput < target) currentOutput = target;
     }
 
-    int output = currentOutput;
+    int output = (int)currentOutput;
 
     // Nastav výstupy
     setPWMOutput(output);
