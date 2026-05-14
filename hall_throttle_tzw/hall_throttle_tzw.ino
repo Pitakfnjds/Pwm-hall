@@ -406,11 +406,12 @@ void loop() {
     // Watchdog reset — musí padnúť pred uplynutím WDTO_2S, inak MCU reštart.
     wdt_reset();
 
-    // Čítaj ADC (priemer z 10 vzoriek)
+    // Čítaj ADC (priemer z 10 vzoriek). analogRead() sám trvá ~104µs (13 ADC
+    // clockov pri prescaler 128), S/H acquisition je interná — žiadny extra
+    // delay netreba.
     long sum = 0;
     for (int i = 0; i < 10; i++) {
         sum += analogRead(HALL_PIN);
-        delayMicroseconds(100);
     }
     int raw = sum / 10;
     
