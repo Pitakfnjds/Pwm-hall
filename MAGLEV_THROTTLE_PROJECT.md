@@ -134,8 +134,8 @@ Centrálny mozog systému. Obsahuje Arduino Nano, spracováva signál zo senzora
 | Arduino Pin | Funkcia | Pripojený na | Poznámka |
 |-------------|---------|-------------|----------|
 | A0 | Analógový vstup | J_hall SIG (SS49E) | Čítanie Hall senzora. PCB2: R6 10kΩ pull-down + C5 100nF RC filter (f_c ≈ 159 Hz) |
-| A1 | Analógový vstup | J_pot1 (10kΩ pot) | Ramp-up čas (2–4 s), aktívne keď `USE_RAMPUP_POT` |
-| A2 | Analógový vstup | J_pot2 (10kΩ pot) | PWM limiter (30–100%), aktívne keď `USE_PWM_LIMIT_POT` |
+| A1 | Analógový vstup | J_pot1 (10kΩ pot) | PWM limiter (30–100%), aktívne keď `USE_PWM_LIMIT_POT` |
+| A2 | Analógový vstup | J_pot2 (10kΩ pot) | Ramp-up čas (2–4 s), aktívne keď `USE_RAMPUP_POT` |
 | D5 | PWM výstup | J_motor → Cytron MD30C PWM | 976 Hz PWM. PCB2: R4‖R5 = 2× 10kΩ pull-down (redundant) |
 | D4 | DIR výstup | J_motor → Cytron MD30C DIR | HIGH = MOTOR_FORWARD, LOW = MOTOR_REVERSE |
 | D9 | Digitálny výstup | J_led → NeoPixel DATA | Cez R7 470Ω sériový rezistor |
@@ -288,8 +288,10 @@ PCB2 (Arduino) ──PWM (D5)────► PWM vstup
 
 #### 8.3.1 Čítanie Hall senzora
 - Analógový vstup A0
-- `analogRead(A0)` → hodnota 0–1023
+- `analogRead(A0)` → hodnota 0–1023, priemer z 10 vzoriek
 - Mapovanie surových hodnôt na rozsah throttle (0–100% alebo 0–255 PWM)
+- **Inverzia (`INVERT_THROTTLE`, default zapnuté):** pri aktuálnej orientácii magnetu dáva tlačidlo v pokoji VYSOKÉ ADC a stlačené NÍZKE. Mapovanie je preto `map(raw, cal_max, cal_min, 0, 100)`. Kalibrácia ukladá surové min/max, takže je na orientácii nezávislá. Pre pôvodnú orientáciu stačí `#define` zakomentovať.
+- **Stabilné čítanie potov (`analogReadStable`):** po prepnutí ADC kanála z A0 na pot sa spraví jedno zahodené čítanie, 50 µs pauza a priemer zo 4 vzoriek. Bez toho sa náboj zo S/H kondenzátora (Hall ≈ 800) prelieval do pot kanála a spôsoboval špičky na 1023.
 
 #### 8.3.2 EEPROM kalibračný systém
 Toto je kľúčová funkcia firmware:
@@ -313,7 +315,7 @@ Toto je kľúčová funkcia firmware:
 
 **Vynútená rekalibrácia:**
 - Spustí sa ak je prepínač smeru v určitej pozícii pri zapnutí
-- Vymaže existujúce kalibračné dáta a spustí nový kalibračný proces
+- Spustí nový kalibračný proces; stará kalibrácia v EEPROM sa NEMAŽE, prepíše sa až po úspešnej novej kalibrácii (atomicky cez `eepromSaveCalibration`)
 - Slúži ako "factory reset" pre prípad zlej kalibrácie
 
 #### 8.3.3 PWM generovanie pre motor
@@ -324,11 +326,19 @@ Toto je kľúčová funkcia firmware:
 
 #### 8.3.3a Slew rate limiter (postupný rozbeh a exponenciálny dobeh)
 - Výstup sa nemení okamžite, ale je obmedzený maximálnou rýchlosťou zmeny
-- **Rozbeh (lineárny, `RAMP_UP_TIME`):** default 2 s z 0 % na 100 %. Cez voliteľný A1 pot (`USE_RAMPUP_POT`) nastaviteľný v rozsahu 2–4 s.
-- **Dobeh (spojitá exponenciála):** `currentOutput *= RAMP_DOWN_DECAY^(dt/RAMP_DOWN_INTERVAL_MS)` s `DECAY=0.85` za `INTERVAL=300 ms`. Z 100 % na 0 % cca **5.4 s**, z 80 % na 10 % cca **3.9 s**. Žiadne diskrétne kroky — vyhladzuje sa cez existujúce `dt` v každom loop ticku.
+- **Rozbeh (lineárny, `RAMP_UP_TIME`):** default 2 s z 0 % na 100 %. Cez voliteľný A2 pot (`USE_RAMPUP_POT`) nastaviteľný v rozsahu 2–4 s.
+- **Dobeh (spojitá exponenciála):** `currentOutput *= RAMP_DOWN_DECAY^(dt/RAMP_DOWN_INTERVAL_MS)` s `DECAY=0.72` za `INTERVAL=300 ms`. Z 80 % na 10 % cca **1.9 s**, zo 100 % na 5 % cca **2.7 s**; pod 2 % výstup skočí na presnú 0 (cca **3.6 s** zo 100 %), aby anti-plugging kontrola videla skutočnú nulu. Žiadne diskrétne kroky — vyhladzuje sa cez existujúce `dt` v každom loop ticku. (Pôvodne `DECAY=0.85`, ~5.4 s; skrátené na polovicu.)
 - Funguje pre všetky prechody: stlačenie/pustenie tlačidla, prepnutie do STOP, anti-plugging brzdenie
 - Jedna premenná `currentOutput` sa v každom cykle posúva smerom k cieľu (`target`) — lineárne nahor alebo exponenciálne nadol
 - Ak vodič znovu stlačí tlačidlo počas dobehu, výstup začne lineárne stúpať k novej hodnote
+
+#### 8.3.3b PWM limiter (strop výstupu)
+- Tvrdý strop na `target`, aplikovaný PRED slew rate limiterom — rampa funguje normálne, len nikdy neprekročí limit
+- Default `DEFAULT_MAX_PWM_PERCENT = 70 %`; cez voliteľný A1 pot (`USE_PWM_LIMIT_POT`) nastaviteľný 30–100 %
+- Dôvod: brushed DC motor má najvyššiu účinnosť pri ~60–70 % PWM, I²R straty rastú s kvadrátom prúdu
+- LED pásik škáluje `currentOutput` na `maxAllowedThrottle`, nie na absolútnych 100 % — na strope je pásik plný červený, vodič vidí, že je na limite
+- Sériový výpis v loope ukazuje `LIM:xx%` (a surovú hodnotu potu, ak je pot zapnutý)
+- Compile-time prepínače `USE_RAMPUP_POT` / `USE_PWM_LIMIT_POT` sú default zakomentované — firmware ide nahrať bez fyzicky pripojených potov
 
 #### 8.3.4 Bezpečnostné funkcie vo firmware
 1. **Motor stop pri neutrale:** Ak je prepínač v Neutral → target = 0 (motor plynulo dobieha)
@@ -337,7 +347,7 @@ Toto je kľúčová funkcia firmware:
 4. **Dead zone:** Eliminuje neúmyselné pohyby motora pri minimálnom stlačení
 5. **Kombinácia s hardware pull-down:** Firmware safety + hardware safety = redundantná ochrana
 6. **Anti-plugging ochrana:** Zmena smeru (FWD↔REV) je povolená len keď `currentOutput == 0`. Slew rate limiter zabezpečuje plynulé zastavenie pred zmenou smeru
-7. **Slew rate limiter:** Zabraňuje náhlym zmenám PWM výstupu — motor sa rozbieha lineárne (default 2 s) a zastavuje exponenciálne (~5.4 s do nuly).
+7. **Slew rate limiter:** Zabraňuje náhlym zmenám PWM výstupu — motor sa rozbieha lineárne (default 2 s) a zastavuje exponenciálne (~3.6 s do nuly).
 
 #### 8.3.5 Anti-plugging ochrana – detail
 
@@ -349,11 +359,11 @@ Toto je kľúčová funkcia firmware:
 - Ak sa požaduje opačný smer:
   1. Ak `currentOutput > 0` → zmena smeru **BLOKOVANÁ**, target = 0, slew rate limiter plynulo znižuje výstup
   2. Ak `currentOutput == 0` → zmena smeru **POVOLENÁ**, DIR pin sa zmení, throttle sa povolí
-- Slew rate limiter zabezpečuje plynulé zastavenie cez exponenciálny dobeh (~5.4 s zo 100 % na 0 %)
+- Slew rate limiter zabezpečuje plynulé zastavenie cez exponenciálny dobeh (~3.6 s zo 100 % na 0 %)
 - Počas dobehu Cytron MD30C regeneruje energiu späť do batérie; po dosiahnutí PWM=0 aktívne brzdí
 - Počas blokovania LED pásik **bliká oranžovo** a Serial ukazuje `[BRK!]`
 
-**Typický scenár FWD→REV:** FWD pri 80 % → switch na STOP → exponenciálny dobeh 80→0 (~4.7 s) → switch na REV → `currentOutput==0` → okamžitá zmena smeru → lineárny rozbeh 0→throttle
+**Typický scenár FWD→REV:** FWD pri 80 % → switch na STOP → exponenciálny dobeh 80→0 (~3.4 s) → switch na REV → `currentOutput==0` → okamžitá zmena smeru → lineárny rozbeh 0→throttle
 
 #### 8.3.5 LED vizuálna spätná väzba
 - Postupné rozsvecovanie podľa úrovne throttle
@@ -369,20 +379,18 @@ setup():
     init_pins()
     init_neopixel()
 
-    if forced_recalibration_requested():
-        clear_eeprom_calibration()
-
-    if eeprom_calibration_valid():
-        load_calibration_from_eeprom()
+    if not forced_recalibration_requested() and eeprom_calibration_valid():
+        load_calibration_from_eeprom()   // magic byte + XOR checksum + min<max + rozsah
     else:
-        run_calibration_mode()  // blocking, s LED indikáciou
-        save_calibration_to_eeprom()
+        run_calibration_mode()  // blocking, s LED indikáciou; stará EEPROM cal zostáva
+        save_calibration_to_eeprom()  // atomický prepis až po úspechu
 
 loop():
     hall_raw = average(analogRead(HALL_PIN), 10 vzoriek)
 
     // Mapovanie na throttle rozsah s dead zone
-    throttle = map(hall_raw, cal_min, cal_max, 0, 100)
+    // INVERT_THROTTLE (default): pokoj = cal_max → 0 %, stlačené = cal_min → 100 %
+    throttle = map(hall_raw, cal_max, cal_min, 0, 100)
     throttle = apply_deadzone(throttle, 5%, 95%)
 
     // Čítanie smeru (koliskový prepínač: 1↔0↔2)
@@ -404,12 +412,16 @@ loop():
         activeDirection = switchState
         target = throttle
 
+    // PWM limiter — strop PRED slew rate limiterom
+    maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT      // alebo pot A1 (30–100 %)
+    target = min(target, maxAllowedThrottle)
+
     // Slew rate limiter — lineárny rozbeh, exponenciálny dobeh
     if currentOutput < target:
         currentOutput += (100 * dt / RAMP_UP_TIME)  // lineárne, default 50%/s
     else if currentOutput > target:
         factor = pow(RAMP_DOWN_DECAY, dt / RAMP_DOWN_INTERVAL_MS)
-        currentOutput = currentOutput * factor      // exponenciálne, ~5.4s do nuly
+        currentOutput = currentOutput * factor      // exponenciálne, ~3.6s do nuly
         if currentOutput < 2: currentOutput = 0     // snap pod 2%
     currentOutput = clamp(currentOutput, target)
 
@@ -438,7 +450,8 @@ loop():
 | 9 | FW | Motor pri neutrale | Kontrola pozície prepínača |
 | 10 | FW | Zlá kalibrácia | Forced recalibration mechanizmus |
 | 11 | FW | **Reverz za chodu (plugging)** | **Anti-plugging: zmena smeru povolená len pri currentOutput==0** |
-| 12 | FW | **Náhle zmeny výstupu** | **Slew rate limiter: 3s rozbeh, 3s dobeh** |
+| 12 | FW | **Náhle zmeny výstupu** | **Slew rate limiter: 2 s lineárny rozbeh, exponenciálny dobeh (~3.6 s do nuly)** |
+| 13 | FW | **Neefektívny plný plyn** | **PWM limiter: strop 70 % (alebo pot A1 30–100 %)** |
 
 ---
 
@@ -578,7 +591,7 @@ Ext. 5V zdroj ──► PCB2 (J_power)       Batéria 24V ──► Cytron MD30C
 
 - [x] ~~**Motor driver:**~~ → **VYRIEŠENÉ:** Cytron MD30C, sign-magnitude mode, PWM 0–100%, interné napájanie logiky.
 - [x] ~~**Anti-plugging ochrana:**~~ → **VYRIEŠENÉ:** Zmena smeru blokovaná kým currentOutput > 0. Slew rate limiter zabezpečuje plynulé zastavenie.
-- [x] ~~**Slew rate limiter:**~~ → **VYRIEŠENÉ:** Postupný rozbeh (3s) a dobeh (3s) pre všetky prechody vrátane STOP.
+- [x] ~~**Slew rate limiter:**~~ → **VYRIEŠENÉ:** Lineárny rozbeh (2 s) a exponenciálny dobeh (~3.6 s) pre všetky prechody vrátane STOP.
 - [ ] **Zdroj 5V pre PCB2:** Vyriešiť ako napájať Arduino a senzory na volante. Možnosti: datalogger, vlastný step-down z batérie, USB powerbank, alebo iné. Musí stačiť na ~100–300mA.
 - [ ] **30A poistka:** Pridať automobilovú poistku medzi batériu a motor driver ako HW ochranu.
 
@@ -596,7 +609,7 @@ Ext. 5V zdroj ──► PCB2 (J_power)       Batéria 24V ──► Cytron MD30C
 - [ ] **Exponenciálna krivka throttle** – namiesto lineárnej pre lepší pocit z jazdy
 - [ ] **Diagnostický režim** – cez sériový port pre debugging
 - [ ] **Napäťový monitoring** – kontrola 5V rail napätia
-- [x] ~~**Soft-start**~~ → **VYRIEŠENÉ:** Slew rate limiter (3s ramp-up)
+- [x] ~~**Soft-start**~~ → **VYRIEŠENÉ:** Slew rate limiter (2 s ramp-up, voliteľne pot A2 2–4 s)
 
 ---
 
@@ -696,6 +709,16 @@ Ext. 5V zdroj ──► PCB2 (J_power)       Batéria 24V ──► Cytron MD30C
 
 ### 18.3 Čo sa riešilo naposledy
 
+**2026-09-04: Vetva `feature/firmware-efficiency` — efektivita + bezpečnostné fixy**
+- Zadanie v `FIRMWARE_ZMENY_INSTRUKCIE.md` je IMPLEMENTOVANÉ (detaily v ňom sú už zastarané, autoritatívny je tento dokument, `CLAUDE.md` a firmware)
+- PWM limiter (default 70 %, pot A1), compile-time prepínače `USE_RAMPUP_POT` / `USE_PWM_LIMIT_POT`
+- Spojitý exponenciálny dobeh, `DECAY=0.72` za 300 ms (~3.6 s do nuly), snap na 0 pod 2 %
+- `INVERT_THROTTLE` — nová orientácia magnetu, pokoj = vysoké ADC
+- Prehodené poty: A1 = PWM limiter, A2 = ramp-up
+- `analogReadStable()` proti prelievaniu náboja S/H kondenzátora medzi ADC kanálmi
+- Bezpečnosť: Hall fault detection (rail + margin), watchdog `WDTO_2S`, EEPROM XOR checksum, stará kalibrácia sa pri rekalibrácii nemaže
+- RAM: `F()` makro pre Serial literály (~850 B), odstránený `delayMicroseconds(100)` v ADC averagingu
+
 **2026-03-15: Firmware pre Cytron MD30C + slew rate limiter**
 - Firmware prepísaný z TZW-36V-30A-HS na Cytron MD30C (PWM 0–100%, sign-magnitude mode)
 - **Implementovaný slew rate limiter:** postupný rozbeh (3s) a dobeh (3s) pre všetky prechody
@@ -715,4 +738,4 @@ Ext. 5V zdroj ──► PCB2 (J_power)       Batéria 24V ──► Cytron MD30C
 
 *Dokument vytvorený: 2026-02-28*
 *Zdroj: Kompletná história chatov projektu MagLev Throttle*
-*Posledná aktualizácia: 2026-03-15 – firmware pre Cytron MD30C, slew rate limiter, zjednodušený anti-plugging*
+*Posledná aktualizácia: 2026-09-04 – feature/firmware-efficiency: PWM limiter, exp. dobeh 0.72, INVERT_THROTTLE, poty A1/A2, bezpečnostné fixy*
