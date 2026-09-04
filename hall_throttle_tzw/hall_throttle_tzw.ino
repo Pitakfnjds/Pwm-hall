@@ -17,6 +17,7 @@
 // Zakomentuj #define ak potenciometer NIE JE fyzicky pripojený.
 // Keď je zakomentovaný, použije sa DEFAULT konštanta nižšie.
 
+#define INVERT_THROTTLE   // tlačidlo v pokoji = VYSOKÉ ADC (tvoja nová orientácia magnetu)
 //#define USE_RAMPUP_POT      // A1: potenciometer pre ramp-up čas
 //#define USE_PWM_LIMIT_POT   // A2: potenciometer pre PWM limiter
 
@@ -30,8 +31,8 @@ const int PWM_PIN = 5;        // PWM výstup (HW: R4||R5 = 2× 10kΩ pull-down n
 const int DIR_PIN = 4;        // DIR výstup (smer otáčania)
 const int NEOPIXEL_PIN = 9;   // NeoPixel DIN
 const int LED_PIN = 13;       // Vstavaná LED na Nano
-const int RAMP_POT_PIN = A1;       // potenciometer pre nastavenie rampup času
-const int PWM_LIMIT_POT = A2;      // potenciometer pre PWM limiter (strop výstupu)
+const int RAMP_POT_PIN = A2;       // potenciometer pre nastavenie rampup času
+const int PWM_LIMIT_POT = A1;      // potenciometer pre PWM limiter (strop výstupu)
 
 // === PREPÍNAČ (ENABLE + SMER) ===
 const int SW_FWD_PIN = 2;     // Poloha 1 = dopredu (A1, červený)
@@ -85,7 +86,8 @@ unsigned long lastLoopTime = 0;            // Pre výpočet delta time
 
 // Exponenciálny dobeh — SPOJITÁ exponenciála: currentOutput *= DECAY^(dt/INTERVAL_MS)
 // Pri DECAY=0.85 a INTERVAL=300ms: 80% → 10% za ~3.9 s, 100% → 0 za ~5.4 s
-const float RAMP_DOWN_DECAY = 0.85f;
+// Pri DECAY=0.72 a INTERVAL=300ms: idu casy na polovicu oproti 0.85
+const float RAMP_DOWN_DECAY = 0.72f;
 const unsigned long RAMP_DOWN_INTERVAL_MS = 300;
 
 // PWM limiter — strop pre target (aplikuje sa PRED slew rate limiterom)
@@ -181,20 +183,20 @@ void setup() {
     Serial.println();
     Serial.println(F("=== KONFIGURACIA ==="));
 #ifdef USE_RAMPUP_POT
-    Serial.println(F("Ramp-up: POT A1 (2-4s)"));
+    Serial.println(F("Ramp-up: POT A2 (2-4s)"));
 #else
     Serial.print(F("Ramp-up: FIXNA "));
     Serial.print(DEFAULT_RAMP_UP_TIME);
     Serial.println(F("ms"));
 #endif
 #ifdef USE_PWM_LIMIT_POT
-    Serial.println(F("PWM limit: POT A2 (30-100%)"));
+    Serial.println(F("PWM limit: POT A1 (30-100%)"));
 #else
     Serial.print(F("PWM limit: FIXNA "));
     Serial.print(DEFAULT_MAX_PWM_PERCENT);
     Serial.println(F("%"));
 #endif
-    Serial.println(F("Ramp-down: EXP spojita (DECAY=0.85, INTERVAL=300ms, ~5.4s plne->0)"));
+    Serial.println(F("Ramp-down: EXP spojita (DECAY=0.72, INTERVAL=300ms, ~2.7s plne->0)"));
     Serial.println();
 
     // Animácia pri štarte
@@ -295,7 +297,7 @@ void setup() {
 unsigned long readRampTime() {
     static bool initialized = false;
     static float filtered;
-    int raw = analogRead(RAMP_POT_PIN);
+    int raw = analogReadStable(RAMP_POT_PIN);
     if (!initialized) {
         filtered = raw;
         initialized = true;
@@ -316,6 +318,17 @@ SwitchState readSwitch() {
     } else {
         return SW_STOP;     // Poloha 0 (alebo neurčitý stav)
     }
+}
+
+// Stabilné čítanie ADC po prepnutí kanála.
+// Prvé (zahodené) čítanie nechá S/H kondenzátor ustáliť na novom kanáli,
+// inak sa naň "preleje" náboj z predošlého kanála (A0=hall 808 → pot spike na 1023).
+int analogReadStable(int pin) {
+    analogRead(pin);            // throwaway — ustálenie S/H
+    delayMicroseconds(50);
+    long sum = 0;
+    for (int i = 0; i < 4; i++) sum += analogRead(pin);
+    return (int)(sum / 4);
 }
 
 // Farba podľa percenta (zelená → oranžová → červená)
@@ -538,7 +551,11 @@ void loop() {
     }
 
     // Mapovanie na 0-100%
+#ifdef INVERT_THROTTLE
+    int raw_percent = map(raw, cal_max, cal_min, 0, 100);   // pokoj=cal_max → 0 %, stlačené=cal_min → 100 %
+#else
     int raw_percent = map(raw, cal_min, cal_max, 0, 100);
+#endif
     raw_percent = constrain(raw_percent, 0, 100);
 
     // Aplikácia deadzone (fault prepise throttle na 0 nizsie)
@@ -605,7 +622,7 @@ void loop() {
 #endif
 
 #ifdef USE_PWM_LIMIT_POT
-    int potValue = analogRead(PWM_LIMIT_POT);
+    int potValue = analogReadStable(PWM_LIMIT_POT);
     maxAllowedThrottle = map(potValue, 0, 1023, 30, 100);  // 30–100%
 #else
     maxAllowedThrottle = DEFAULT_MAX_PWM_PERCENT;
@@ -692,6 +709,14 @@ void loop() {
         Serial.print(target);
         Serial.print(F("%"));
     }
+    Serial.print(F("\tLIM:"));
+    Serial.print(maxAllowedThrottle);
+    Serial.print(F("%"));
+#ifdef USE_PWM_LIMIT_POT
+    Serial.print(F("(pot:"));
+    Serial.print(potValue);
+    Serial.print(F(")"));
+#endif
     Serial.print(F("\t-> PWM:"));
     Serial.print(pwmValue);
     Serial.print(F("/255 ("));
